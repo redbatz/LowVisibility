@@ -4,18 +4,25 @@ using LowVisibility.Object;
 using us.frostraptor.modUtils;
 
 namespace LowVisibility.Helper {
-    public class ActorHelper {
+    public static class ActorHelper {
 
         // --- Methods manipulating EWState
-        public static EWState GetEWState(AbstractActor actor) {
-            return actor != null ? new EWState(actor) : new EWState();
+        public static EWState GetEWState(this AbstractActor actor) {
+            if (EWState.InBatchProcess) {
+                if (EWState.EWStateCache.TryGetValue(actor, out EWState state))
+                    return state;
+
+                return EWState.EWStateCache[actor] = new EWState(actor);
+            }
+
+            return new EWState(actor);
         }
 
         public static int UpdateSensorCheck(AbstractActor actor, bool updateAuras) {
 
             int checkResult = ModState.GetCheckResult();
             actor.StatCollection.Set<int>(ModStats.CurrentRoundEWCheck, checkResult);
-            Mod.Log.Debug($"Actor:{CombatantUtils.Label(actor)} has raw EW Check: {checkResult}");
+            Mod.Log.Info?.Write($"Actor:{CombatantUtils.Label(actor)} has raw EW Check: {checkResult}");
 
             if (updateAuras && actor.StatCollection.ContainsStatistic(ModStats.CAESensorsRange)) {
                 float sensorsRange = SensorLockHelper.GetSensorsRange(actor);

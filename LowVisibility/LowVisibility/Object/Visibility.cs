@@ -58,70 +58,61 @@ namespace LowVisibility.Object {
 
     public enum SensorScanType {
         NoInfo,
-        Location,
-        Type,
-        Silhouette,
-        Vector,
-        SurfaceScan,
-        SurfaceAnalysis,
-        WeaponAnalysis,
-        StructureAnalysis,
-        DeepScan,
-        DentalRecords
+        LocationAndType,
+        ArmorAndWeaponType,
+        StructAndWeaponID,
+        AllInformation
+        
     }
 
     static class SensorLockTypeExtensions {
         public static string Label(this SensorScanType level) {
             switch (level) {
                 case SensorScanType.NoInfo:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_NONE]).ToString();
-                case SensorScanType.Location:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_LOCATION]).ToString();
-                case SensorScanType.Type:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_TYPE]).ToString();
-                case SensorScanType.Silhouette:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_SILHOUETTE]).ToString();
-                case SensorScanType.Vector:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_VECTOR]).ToString();
-                case SensorScanType.SurfaceScan:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_SURFACE_SCAN]).ToString();
-                case SensorScanType.SurfaceAnalysis:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_SURFACE_ANALYZE]).ToString();
-                case SensorScanType.WeaponAnalysis:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_WEAPON_ANALYZE]).ToString();
-                case SensorScanType.StructureAnalysis:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_STRUCTURE_ANALYZE]).ToString();
-                case SensorScanType.DeepScan:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_DEEP_SCAN]).ToString();
-                case SensorScanType.DentalRecords:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_PILOT]).ToString();
+                    return new Localize.Text(Mod.LocalizedText.StatusPanel[ModText.LT_DETAILS_NONE]).ToString();
+                case SensorScanType.LocationAndType:
+                    return new Localize.Text(Mod.LocalizedText.StatusPanel[ModText.LT_DETAILS_LOCATION_AND_TYPE]).ToString();
+                case SensorScanType.ArmorAndWeaponType:
+                    return new Localize.Text(Mod.LocalizedText.StatusPanel[ModText.LT_DETAILS_ARMOR_AND_WEAPON_TYPE]).ToString();
+                case SensorScanType.StructAndWeaponID:
+                    return new Localize.Text(Mod.LocalizedText.StatusPanel[ModText.LT_DETAILS_STRUCT_AND_WEAPON_ID]).ToString();
+                case SensorScanType.AllInformation:
+                    return new Localize.Text(Mod.LocalizedText.StatusPanel[ModText.LT_DETAILS_ALL_INFO]).ToString();
                 default:
-                    return new Localize.Text(Mod.Config.LocalizedText[ModConfig.LT_DETAILS_UNKNOWN]).ToString();
+                    return new Localize.Text(Mod.LocalizedText.StatusPanel[ModText.LT_DETAILS_UNKNOWN]).ToString();
             }
         }
 
         public static VisibilityLevel Visibility(this SensorScanType level) {
             switch (level) {
-                case SensorScanType.Location:
-                case SensorScanType.Type:
-                    return VisibilityLevel.BlobSmall;
-                case SensorScanType.Silhouette:                    
-                case SensorScanType.Vector:
-                    return VisibilityLevel.Blip0Minimum;
-                case SensorScanType.SurfaceScan:
-                case SensorScanType.SurfaceAnalysis:
-                case SensorScanType.WeaponAnalysis:
-                case SensorScanType.StructureAnalysis:
-                    return VisibilityLevel.Blip1Type;
-                case SensorScanType.DeepScan:
-                case SensorScanType.DentalRecords:
+                case SensorScanType.AllInformation:
+                case SensorScanType.StructAndWeaponID:
                     return VisibilityLevel.Blip4Maximum;
+                case SensorScanType.ArmorAndWeaponType:
+                    return VisibilityLevel.Blip1Type;
+                case SensorScanType.LocationAndType:
+                    return VisibilityLevel.Blip0Minimum;
                 case SensorScanType.NoInfo:
                 default:
                     return VisibilityLevel.None;
             }
         }
 
+    }
+
+    public static class SensorScanTypeHelper
+    {
+        public static SensorScanType DetectionLevelForCheck(int checkResult)
+        {
+            SensorScanType level = SensorScanType.NoInfo;
+            if (checkResult >= 9) level = SensorScanType.AllInformation;
+            else if (checkResult >= 6) level = SensorScanType.StructAndWeaponID;
+            else if (checkResult >= 3) level = SensorScanType.ArmorAndWeaponType;
+            else if (checkResult >= 0) level = SensorScanType.LocationAndType;
+
+            Mod.Log.Trace?.Write($" For EW check result: {checkResult} detectionLevel is: {level} ");
+            return level;
+        }
     }
    
 }

@@ -1,6 +1,8 @@
 ﻿using BattleTech;
 using Harmony;
+using IRBTModUtils.Extension;
 using LowVisibility.Helper;
+using LowVisibility.Object;
 using System;
 using System.Reflection;
 using us.frostraptor.modUtils;
@@ -14,7 +16,7 @@ namespace LowVisibility.Patch {
         public static bool IsFromSave = false;
 
         public static void Prefix(TurnDirector __instance) {
-            Mod.Log.Trace("TD:OEB:pre entered.");
+            Mod.Log.Trace?.Write("TD:OEB:pre entered.");
 
             // Initialize the probabilities
             ModState.InitializeCheckResults();
@@ -37,8 +39,14 @@ namespace LowVisibility.Patch {
                             }
 
                         } else {
-                            Mod.Log.Debug($"  Actor:{CombatantUtils.Label(actor)} was NULL!");
+                            Mod.Log.Debug?.Write($"  Actor:{CombatantUtils.Label(actor)} was NULL!");
                         }
+                    }
+                    
+                    if (randomPlayerActor != null)
+                    {
+                        Mod.Log.Debug?.Write($"Assigning actor: {CombatantUtils.Label(randomPlayerActor)} as lastActive.");
+                        ModState.LastPlayerActorActivated = randomPlayerActor;
                     }
                 }
 
@@ -61,21 +69,50 @@ namespace LowVisibility.Patch {
     }
 
 
-    [HarmonyPatch()]
+    [HarmonyPatch(typeof(TurnDirector), "BeginNewRound")]
     public static class TurnDirector_BeginNewRound {
 
-        // Private method can't be patched by annotations, so use MethodInfo
-        public static MethodInfo TargetMethod() {
-            return AccessTools.Method(typeof(TurnDirector), "BeginNewRound", new Type[] { typeof(int) });
-        }
-
         public static void Prefix(TurnDirector __instance, int round) {
-            Mod.Log.Trace($"TD:BNR entered");
-            Mod.Log.Debug($"=== TurnDirector - Beginning round:{round}");
+            Mod.Log.Trace?.Write($"TD:BNR entered");
+            Mod.Log.Info?.Write($"=== Turn Director is beginning round: {round}");
 
             // Update the current vision for all allied and friendly units
             foreach (AbstractActor actor in __instance.Combat.AllActors) {
+                Mod.Log.Info?.Write($" -- Updating actor: {actor.DistinctId()}");
+
+                // If our sensors are offline, re-enable them
+                if (actor.StatCollection.ContainsStatistic(ModStats.DisableSensors))
+                {
+
+                    if (round >= actor.StatCollection.GetValue<int>(ModStats.DisableSensors))
+                    {
+                        Mod.Log.Info?.Write($"Re-enabling sensors for {CombatantUtils.Label(actor)}");
+                        actor.StatCollection.RemoveStatistic(ModStats.DisableSensors);
+                    }
+                    else
+                    {
+                        Mod.Log.Info?.Write($"Actor: {CombatantUtils.Label(actor)} sensors are offline until: {actor.StatCollection.GetValue<int>(ModStats.DisableSensors)}");
+                    }
+                }
+                    
+                // Update our sensors check
                 ActorHelper.UpdateSensorCheck(actor, true);
+
+                // Print the current state of the actor
+                EWState actorState = new EWState(actor);
+                Mod.Log.Info?.Write(actorState.ToString());
+                
+            }
+
+            // Now that all sensor checks are updated, refresh visiblity for all actors
+            foreach (AbstractActor actor in __instance.Combat.AllActors)
+            {
+
+                if (actor.TeamId == __instance.Combat.LocalPlayerTeamGuid)
+                {
+                    actor.VisibilityCache.RebuildCache(actor.Combat.GetAllImporantCombatants());
+                    CombatHUDHelper.ForceNameRefresh(actor.Combat);
+                }
             }
 
         }
@@ -85,7 +122,7 @@ namespace LowVisibility.Patch {
     [HarmonyPatch(typeof(TurnDirector), "OnCombatGameDestroyed")]
     public static class TurnDirector_OnCombatGameDestroyed {
         public static void Prefix(TurnDirector __instance) {
-            Mod.Log.Debug($"TD:OCGD entered");
+            Mod.Log.Debug?.Write($"TD:OCGD entered");
             // Remove all combat state
             CombatHUD_SubscribeToMessages.OnCombatGameDestroyed(__instance.Combat);
 
@@ -112,7 +149,7 @@ namespace LowVisibility.Patch {
         }
 
         public static void Postfix(EncounterLayerParent __instance, CombatGameState combat) {
-            Mod.Log.Trace($"TD:IFSPT entered");
+            Mod.Log.Trace?.Write($"TD:IFSPT entered");
 
             TurnDirector_OnEncounterBegin.IsFromSave = true;
         }

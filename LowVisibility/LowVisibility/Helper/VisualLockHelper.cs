@@ -5,12 +5,13 @@ using us.frostraptor.modUtils;
 using us.frostraptor.modUtils.math;
 
 namespace LowVisibility.Helper {
-    class VisualLockHelper {
+    public static class VisualLockHelper {
 
         // WARNING: DUPLICATE OF HBS CODE. THIS IS LIKELY TO BREAK IF HBS CHANGES THE SOURCE FUNCTIONS
         public static float GetSpotterRange(AbstractActor source) {
             // FIXME: Dirty hack here. Assuming that night vision mode only comes on during a unit's turn / selection, then goes away
-            float visRange = ModState.IsNightVisionMode ? ModState.GetMapConfig().nightVisionSpotterRange : ModState.GetMapConfig().spotterRange;
+            float visRange = ModState.IsNightVisionMode ? 
+                ModState.GetMapConfig().nightVisionSpotterRange : ModState.GetMapConfig().spotterRange;
             return GetVisualRange(visRange, source);
         }
 
@@ -27,7 +28,7 @@ namespace LowVisibility.Helper {
         }
 
         private static float GetVisualRange(float visionRange, AbstractActor source) {
-            float visualRange = visionRange;
+            float visualRange;
             if (source.IsShutDown) {
                 visualRange = visionRange * source.Combat.Constants.Visibility.ShutdownSpottingDistanceMultiplier;
             } else if (source.IsProne) {
@@ -37,8 +38,8 @@ namespace LowVisibility.Helper {
                 float absolutes = VisualLockHelper.GetAllSpotterAbsolutes(source);
                 
                 visualRange = visionRange * multipliers + absolutes;
-                Mod.Log.Trace($" -- source:{CombatantUtils.Label(source)} has spotting " +
-                    $"multi:x{multipliers} absolutes:{absolutes} visionRange:{visionRange}");
+                //Mod.Log.Trace?.Write($" -- source:{CombatantUtils.Label(source)} has spotting " +
+                //    $"multi:x{multipliers} absolutes:{absolutes} visionRange:{visionRange}");
             }
 
             if (visualRange < Mod.Config.Vision.MinimumVisionRange()) {
@@ -56,10 +57,10 @@ namespace LowVisibility.Helper {
         public static float GetAdjustedSpotterRange(AbstractActor source, ICombatant target) {
 
             float targetVisibility = 1f;
-            AbstractActor abstractActor = target as AbstractActor;
-            EWState sourceState = new EWState(source);
-            if (abstractActor != null) {
-                targetVisibility = VisualLockHelper.GetTargetVisibility(abstractActor, sourceState);
+            AbstractActor targetActor = target as AbstractActor;
+            if (targetActor != null) {
+                EWState sourceState = source.GetEWState();
+                targetVisibility = VisualLockHelper.GetTargetVisibility(targetActor, sourceState);
             }
 
             float spotterRange = VisualLockHelper.GetSpotterRange(source);
@@ -70,9 +71,9 @@ namespace LowVisibility.Helper {
             }
 
             // Round up to the nearest full hex
-            float normalizedRange = HexUtils.CountHexes(spotterRange, true) * 30f;
+            float normalizedRange = HexUtils.CountHexes(modifiedRange, true) * 30f;
 
-            //LowVisibility.Logger.Trace($" -- source:{CombatantUtils.Label(source)} adjusted spotterRange:{normalizedRange}m normalized from:{spotterRange}m");
+            Mod.Log.Trace?.Write($" -- source:{CombatantUtils.Label(source)} adjusted spotterRange:{normalizedRange}m normalized from:{modifiedRange}m");
             return normalizedRange;
         }
 
@@ -118,16 +119,16 @@ namespace LowVisibility.Helper {
         private static float GetAllTargetVisibilityMultipliers(AbstractActor target, EWState sourceState) {
             if (target == null) { return 1f; }
 
-            float baseVisMulti = 0f;
-            float shutdownVisMulti = (!target.IsShutDown) ? 0f : target.Combat.Constants.Visibility.ShutDownVisibilityModifier;        
+            float baseVisMulti = 1f;
+            float shutdownVisMulti = (!target.IsShutDown) ? 1f : target.Combat.Constants.Visibility.ShutDownVisibilityModifier;        
             float spottingVisibilityMultiplier = target.SpottingVisibilityMultiplier;
 
-            EWState ewState = new EWState(target);
+            EWState ewState = target.GetEWState();
             float mimeticMod = ewState.MimeticVisibilityMod(sourceState);
 
-            float targetVisibility = baseVisMulti + shutdownVisMulti + spottingVisibilityMultiplier + mimeticMod;
-            Mod.Log.Trace($" Actor: {CombatantUtils.Label(target)} has visibility: {targetVisibility} = " +
-                $"baseVisMulti: {baseVisMulti} +  shutdownVisMulti: {shutdownVisMulti} + spottingVisibilityMultiplier: {spottingVisibilityMultiplier} + visionStealthMod: {mimeticMod}");
+            float targetVisibility = baseVisMulti * shutdownVisMulti * spottingVisibilityMultiplier * mimeticMod;
+            Mod.Log.Trace?.Write($" Actor: {CombatantUtils.Label(target)} has visibility: {targetVisibility} = " +
+                $"baseVisMulti: {baseVisMulti} * shutdownVisMulti: {shutdownVisMulti} * spottingVisibilityMultiplier: {spottingVisibilityMultiplier} * visionStealthMod: {mimeticMod}");
 
             return targetVisibility;
             //return baseVisMulti + shutdownVisMulti + spottingVisibilityMultiplier;
@@ -151,6 +152,7 @@ namespace LowVisibility.Helper {
 
             float spottingRangeVsTarget = VisualLockHelper.GetAdjustedSpotterRange(source, target);
             float distance = Vector3.Distance(sourcePos, targetPos);
+            //Mod.Log.Info?.Write($" COMPARING SPOTTING_RANGE: {spottingRangeVsTarget} VS DISTANCE: {distance}");
 
             // Check range first
             if (distance > spottingRangeVsTarget) {
@@ -175,6 +177,13 @@ namespace LowVisibility.Helper {
             }
 
             return false;
+        }
+
+        public static bool CanSpotTargetUsingCurrentPositions(AbstractActor source, ICombatant target)
+        {
+            if (source == null || target == null) return false;
+
+            return CanSpotTarget(source, source.CurrentPosition, target, target.CurrentPosition, target.CurrentRotation, source.Combat.LOS);
         }
     }
 }

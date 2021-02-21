@@ -3,7 +3,6 @@ using Harmony;
 using LowVisibility.Helper;
 using LowVisibility.Object;
 using UnityEngine;
-using us.frostraptor.modUtils;
 
 namespace LowVisibility.Patch {
 
@@ -12,9 +11,9 @@ namespace LowVisibility.Patch {
 
         [HarmonyBefore(new string[] { "Sheepy.BattleTechMod.AttackImprovementMod" })]
         private static void Postfix(ToHit __instance, ref float __result, AbstractActor attacker, Weapon weapon, ICombatant target, 
-            Vector3 attackPosition, Vector3 targetPosition, LineOfFireLevel lofLevel, bool isCalledShot) {
+            Vector3 attackPosition, Vector3 targetPosition, LineOfFireLevel lofLevel) {
 
-            //Mod.Log.Debug($"Getting modifiers for attacker:{CombatantUtils.Label(attacker)} " +
+            //Mod.Log.Debug?.Write($"Getting modifiers for attacker:{CombatantUtils.Label(attacker)} " +
             //    $"using weapon:{weapon.Name} vs target:{CombatantUtils.Label(target)} with initial result:{__result}");
 
             AbstractActor targetActor = target as AbstractActor;
@@ -32,13 +31,15 @@ namespace LowVisibility.Patch {
 
                 // Zoom applies independently of visibility (request from Harkonnen)
                 int zoomVisionMod = attackerState.GetZoomVisionAttackMod(weapon, distance);
-                int zoomAttackMod = attackerState.HasZoomVisionToTarget(weapon, distance) ? zoomVisionMod - mimeticMod : Mod.Config.Attack.NoVisualsPenalty;
+                int zoomAttackMod = attackerState.HasZoomVisionToTarget(weapon, distance, lofLevel) ? zoomVisionMod - mimeticMod : Mod.Config.Attack.NoVisualsPenalty;
 
                 bool hasVisualAttack = (eyeballAttackMod < Mod.Config.Attack.NoVisualsPenalty || zoomAttackMod < Mod.Config.Attack.NoVisualsPenalty);
 
                 // Sensor attack bucket.  Sensors always fallback, so roll everything up and cap
                 int narcAttackMod = targetState.NarcAttackMod(attackerState);
                 int tagAttackMod = targetState.TagAttackMod(attackerState);
+
+                int ecmJammedAttackMod = attackerState.ECMJammedAttackMod();
                 int ecmShieldAttackMod = targetState.ECMAttackMod(attackerState);
                 int stealthAttackMod = targetState.StealthAttackMod(attackerState, weapon, distance);
 
@@ -46,8 +47,10 @@ namespace LowVisibility.Patch {
                 int sensorsAttackMod = Mod.Config.Attack.NoSensorsPenalty;
                 if (hasSensorAttack) {
                     sensorsAttackMod = 0;
-                    sensorsAttackMod -= narcAttackMod;
-                    sensorsAttackMod -= tagAttackMod;
+                    sensorsAttackMod += narcAttackMod;
+                    sensorsAttackMod += tagAttackMod;
+
+                    sensorsAttackMod += ecmJammedAttackMod;
                     sensorsAttackMod += ecmShieldAttackMod;
                     sensorsAttackMod += stealthAttackMod;
                 }
@@ -82,7 +85,7 @@ namespace LowVisibility.Patch {
         private static void Postfix(ToHit __instance, ref string __result, AbstractActor attacker, Weapon weapon, ICombatant target, 
             Vector3 attackPosition, Vector3 targetPosition, LineOfFireLevel lofLevel, bool isCalledShot) {
 
-            //Mod.Log.Debug($"Getting modifier descriptions for attacker:{CombatantUtils.Label(attacker)} " +
+            //Mod.Log.Debug?.Write($"Getting modifier descriptions for attacker:{CombatantUtils.Label(attacker)} " +
             //    $"using weapon:{weapon.Name} vs target:{CombatantUtils.Label(target)}");
 
             //AbstractActor targetActor = target as AbstractActor;

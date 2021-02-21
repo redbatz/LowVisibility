@@ -1,8 +1,11 @@
 ﻿
 using BattleTech;
 using BattleTech.Rendering.Mood;
+using BattleTech.UI;
 using LowVisibility.Helper;
+using LowVisibility.Object;
 using System;
+using System.Collections.Generic;
 using us.frostraptor.modUtils.Redzen;
 using static LowVisibility.Helper.MapHelper;
 
@@ -19,6 +22,10 @@ namespace LowVisibility {
         public const int ResultsToPrecalcuate = 16384;
         public static double[] CheckResults = new double[ResultsToPrecalcuate];
         public static int CheckResultIdx = 0;
+
+        // Combat specific status
+        public static CombatGameState Combat = null;
+        public static Dictionary<CombatHUDMarkDisplay, MarkGOContainer> MarkContainerRefs = new Dictionary<CombatHUDMarkDisplay, MarkGOContainer>();
 
         // --- Methods Below ---
         public static MapConfig GetMapConfig() {
@@ -43,7 +50,7 @@ namespace LowVisibility {
 
         // --- Methods manipulating CheckResults
         public static void InitializeCheckResults() {
-            Mod.Log.Info($"Initializing a new random buffer of size:{ResultsToPrecalcuate}");
+            Mod.Log.Info?.Write($"Initializing a new random buffer of size:{ResultsToPrecalcuate}");
             Xoshiro256PlusRandomBuilder builder = new Xoshiro256PlusRandomBuilder();
             IRandomSource rng = builder.Create();
             double mean = Mod.Config.Probability.Mu;
@@ -54,7 +61,7 @@ namespace LowVisibility {
 
         public static int GetCheckResult() {
             if (CheckResultIdx < 0 || CheckResultIdx > ResultsToPrecalcuate) {
-                Mod.Log.Info($"ERROR: CheckResultIdx of {CheckResultIdx} is out of bounds! THIS SHOULD NOT HAPPEN!");
+                Mod.Log.Info?.Write($"ERROR: CheckResultIdx of {CheckResultIdx} is out of bounds! THIS SHOULD NOT HAPPEN!");
             }
 
             double result = CheckResults[CheckResultIdx];
@@ -71,6 +78,7 @@ namespace LowVisibility {
         }
 
         public static void Reset() {
+            Mod.Log.Info?.Write($"RESETTING STATE!");
             // Reinitialize state
             MapConfig = null;
             MoodController = null;
@@ -80,6 +88,12 @@ namespace LowVisibility {
 
             CheckResults = new double[ResultsToPrecalcuate];
             CheckResultIdx = 0;
+
+            // Combat state
+            Combat = null;
+            MarkContainerRefs.Clear();
+
+            EWState.ResetCache();
         }
 
     }

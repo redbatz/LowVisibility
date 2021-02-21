@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Text;
 using TMPro;
 using UnityEngine;
 using us.frostraptor.modUtils;
@@ -71,7 +72,7 @@ namespace LowVisibility.Patch {
 
         // TODO: Dangerous PREFIX false here!
         public static bool Prefix(CombatHUDTargetingComputer __instance, CombatHUD ___HUD) {
-            //LowVisibility.Logger.Debug("CombatHUDTargetingComputer:Update:pre - entered.");
+            //Mod.Log.Trace?.Write("CHUDTC:U:pre - entered.");
 
             CombatGameState Combat = ___HUD?.Combat;
 
@@ -79,6 +80,7 @@ namespace LowVisibility.Patch {
             if (__instance.ActorInfo != null) {
                 __instance.ActorInfo.DisplayedCombatant = __instance.ActivelyShownCombatant;
             }
+
             if (__instance.ActivelyShownCombatant == null ||
                 (__instance.ActivelyShownCombatant.team != Combat.LocalPlayerTeam
                     && !Combat.HostilityMatrix.IsFriendly(__instance.ActivelyShownCombatant.team.GUID, Combat.LocalPlayerTeamGuid)
@@ -106,112 +108,244 @@ namespace LowVisibility.Patch {
     public static class CombatHUDTargetingComputer_RefreshActorInfo {
 
         private static void SetArmorDisplayActive(CombatHUDTargetingComputer __instance, bool active) {
-            Mech mech = __instance.ActivelyShownCombatant as Mech;
-            Vehicle vehicle = __instance.ActivelyShownCombatant as Vehicle;
-            Turret turret = __instance.ActivelyShownCombatant as Turret;
-            Building building = __instance.ActivelyShownCombatant as Building;
 
-            if (mech != null) { __instance.MechArmorDisplay.gameObject.SetActive(active); }
-            else if (vehicle != null) { __instance.VehicleArmorDisplay.gameObject.SetActive(active); }
-            else if (turret != null) { __instance.TurretArmorDisplay.gameObject.SetActive(active); }
-            else if (building != null) { __instance.BuildingArmorDisplay.gameObject.SetActive(active); }        
+            if (__instance.ActivelyShownCombatant is Mech mech) __instance.MechArmorDisplay.gameObject.SetActive(active);
+            else if (__instance.ActivelyShownCombatant is Vehicle vehicle) { __instance.VehicleArmorDisplay.gameObject.SetActive(active); }
+            else if (__instance.ActivelyShownCombatant is Turret turret) { __instance.TurretArmorDisplay.gameObject.SetActive(active); }
+            else if (__instance.ActivelyShownCombatant is BattleTech.Building building) { __instance.BuildingArmorDisplay.gameObject.SetActive(active); }        
+        }
+
+        private static void BuildCACDialogForTarget(AbstractActor source, ICombatant target, float range, bool hasVisualScan, SensorScanType scanType)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            VisibilityLevel visLevel = source.VisibilityToTargetUnit(target);
+            if (target is Mech mech)
+            {
+                string fullName = mech.Description.UIName;
+                string chassisName = mech.UnitName;
+                string partialName = mech.Nickname;
+                string localName = CombatNameHelper.GetEnemyMechDetectionLabel(visLevel, scanType, fullName, partialName, chassisName).ToString();
+
+                string tonnage = "?";
+                if (scanType > SensorScanType.LocationAndType)
+                {
+                    tonnage = new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_WEIGHT], new object[] { (int)Math.Floor(mech.tonnage) }).ToString();
+                }
+
+                string titleText = new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_TITLE],
+                    new object[] { localName, tonnage }).ToString();
+                sb.Append(titleText);
+
+                if (scanType > SensorScanType.StructAndWeaponID)
+                {
+                    // Movement
+                    sb.Append(new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_MOVE_MECH],
+                        new object[] { mech.WalkSpeed, mech.RunSpeed, mech.JumpDistance })
+                        .ToString()
+                        );
+
+                    // Heat
+                    sb.Append(new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_HEAT],
+                        new object[] { mech.CurrentHeat, mech.MaxHeat })
+                        .ToString()
+                        );
+
+                    // Stability
+                    sb.Append(new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_STAB],
+                        new object[] { mech.CurrentStability, mech.MaxStability })
+                        .ToString()
+                        );
+
+                }
+
+            }
+            else if (target is Turret turret)
+            {
+                string chassisName = turret.UnitName;
+                string fullName = turret.Nickname;
+                string localName = CombatNameHelper.GetTurretOrVehicleDetectionLabel(visLevel, scanType, fullName, chassisName, false).ToString();
+
+                string titleText = new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_TITLE],
+                    new object[] { localName, "" }).ToString();
+                sb.Append(titleText);
+            }
+            else if (target is Vehicle vehicle)
+            {
+                string chassisName = vehicle.UnitName;
+                string fullName = vehicle.Nickname;
+                string localName = CombatNameHelper.GetTurretOrVehicleDetectionLabel(visLevel, scanType, fullName, chassisName, true).ToString();
+
+                string tonnage = "?";
+                if (scanType > SensorScanType.LocationAndType)
+                {
+                    tonnage = new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_WEIGHT], new object[] { (int)Math.Floor(vehicle.tonnage) }).ToString();
+                }
+
+                string titleText = new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_TITLE],
+                    new object[] { localName, tonnage }).ToString();
+                sb.Append(titleText);
+
+                if (scanType > SensorScanType.StructAndWeaponID)
+                {
+                    // Movement
+                    sb.Append(new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_MOVE_VEHICLE],
+                        new object[] { vehicle.CruiseSpeed, vehicle.FlankSpeed })
+                        .ToString()
+                        );
+                }
+
+            }
+
+
+            string distance = new Text(Mod.LocalizedText.CACSidePanel[ModText.LT_CAC_SIDEPANEL_DIST], 
+                new object[] { (int)Math.Ceiling(range) }).ToString();
+            sb.Append(distance);
+
+            Text panelText = new Text(sb.ToString(), new object[] { });
+
+            CustAmmoCategories.CombatHUDInfoSidePanelHelper.SetTargetInfo(source, target, panelText);
         }
         
-        public static void Postfix(CombatHUDTargetingComputer __instance, List<TextMeshProUGUI> ___weaponNames, CombatHUDStatusPanel ___StatusPanel) {
+        public static void Postfix(CombatHUDTargetingComputer __instance, List<TextMeshProUGUI> ___weaponNames) {
 
             if (__instance == null || __instance.ActivelyShownCombatant == null || 
-                __instance.ActivelyShownCombatant.Combat == null || __instance.ActivelyShownCombatant.Combat.HostilityMatrix == null) {
-                Mod.Log.Debug($"CHTC:RAI ~~~ TC or target is null, skipping.");
+                __instance.ActivelyShownCombatant.Combat == null || __instance.ActivelyShownCombatant.Combat.HostilityMatrix == null ||
+                __instance.WeaponList == null) 
+            {
+                Mod.Log.Debug?.Write($"CHTC:RAI ~~~ TC, target, or WeaponList is null, skipping.");
                 return;
             }
 
-            if (__instance.ActivelyShownCombatant.Combat.HostilityMatrix.IsLocalPlayerFriendly(__instance.ActivelyShownCombatant.team.GUID)) {
-                Mod.Log.Debug($"CHTC:RAI ~~~ target:{CombatantUtils.Label(__instance.ActivelyShownCombatant)} friendly, resetting.");
+            if (ModState.LastPlayerActorActivated == null)
+            {
+                Mod.Log.Error?.Write("Attempting to refresh ActorInfo, but LastPlayerActorActivated is null. This should never happen!");
+            }
+
+            if (__instance.ActivelyShownCombatant.Combat.HostilityMatrix.IsLocalPlayerFriendly(__instance.ActivelyShownCombatant.team.GUID)) 
+            {
+                Mod.Log.Debug?.Write($"CHTC:RAI ~~~ target:{CombatantUtils.Label(__instance.ActivelyShownCombatant)} friendly, resetting.");
                 __instance.WeaponList.SetActive(true);
                 return;
             } 
-                        
-            Mod.Log.Debug($"CHTC:RAI ~~~ target:{CombatantUtils.Label(__instance.ActivelyShownCombatant)} is enemy");
-                
-            if ((__instance.ActivelyShownCombatant as AbstractActor) != null) {
-                AbstractActor target = __instance.ActivelyShownCombatant as AbstractActor;
-                float range = Vector3.Distance(ModState.LastPlayerActorActivated.CurrentPosition, target.CurrentPosition);
-                bool hasVisualScan = VisualLockHelper.GetVisualScanRange(ModState.LastPlayerActorActivated) >= range;
-                SensorScanType scanType = SensorLockHelper.CalculateSharedLock(target, ModState.LastPlayerActorActivated);
-                Mod.Log.Debug($"CHTC:RAI ~~~ LastActivated:{CombatantUtils.Label(ModState.LastPlayerActorActivated)} vs. enemy:{CombatantUtils.Label(target)} " +
-                    $"at range: {range} has scanType:{scanType} visualScan:{hasVisualScan}");
 
-                if (scanType >= SensorScanType.WeaponAnalysis) {
-                    __instance.WeaponList.SetActive(true);
+            // Only enemies or neutrals below this point
+            Mod.Log.Debug?.Write($"CHTC:RAI ~~~ target:{CombatantUtils.Label(__instance.ActivelyShownCombatant)} is enemy");
+
+            try
+            {
+                if (__instance.ActivelyShownCombatant is AbstractActor target)
+                {
+                    float range = Vector3.Distance(ModState.LastPlayerActorActivated.CurrentPosition, target.CurrentPosition);
+                    bool hasVisualScan = VisualLockHelper.CanSpotTarget(ModState.LastPlayerActorActivated, ModState.LastPlayerActorActivated.CurrentPosition, 
+                        target, target.CurrentPosition, target.CurrentRotation, target.Combat.LOS);
+                    SensorScanType scanType = SensorLockHelper.CalculateSharedLock(target, ModState.LastPlayerActorActivated);
+                    Mod.Log.Debug?.Write($"CHTC:RAI ~~~ LastActivated:{CombatantUtils.Label(ModState.LastPlayerActorActivated)} vs. enemy:{CombatantUtils.Label(target)} " +
+                        $"at range: {range} has scanType:{scanType} visualScan:{hasVisualScan}");
+
+                    // Build the CAC side-panel
+                    try
+                    {
+                        BuildCACDialogForTarget(ModState.LastPlayerActorActivated, __instance.ActivelyShownCombatant, range, hasVisualScan, scanType);
+                    }
+                    catch (Exception e)
+                    {
+                        Mod.Log.Error?.Write(e, $"Failed to initialize CAC SidePanel for source: {CombatantUtils.Label(ModState.LastPlayerActorActivated)} and " +
+                            $"target: {CombatantUtils.Label(__instance.ActivelyShownCombatant)}!");
+                    }
+
+                    if (scanType >= SensorScanType.StructAndWeaponID)
+                    {
+                        __instance.WeaponList.SetActive(true);
+                        SetArmorDisplayActive(__instance, true);
+                    }
+                    else if (scanType >= SensorScanType.ArmorAndWeaponType || hasVisualScan)
+                    {
+                        SetArmorDisplayActive(__instance, true);
+                        ObfuscateWeaponLabels(___weaponNames, target);
+
+                        // Update the summary display
+                        __instance.WeaponList.SetActive(true);
+                        Transform weaponListT = __instance.WeaponList?.transform?.parent?.Find("tgtWeaponsLabel");
+                        GameObject weaponsLabel = weaponListT.gameObject;
+                        TextMeshProUGUI labelText = weaponsLabel.GetComponent<TextMeshProUGUI>();
+                        labelText.SetText(new Text(Mod.LocalizedText.TargetingComputer[ModText.LT_TARG_COMP_UNIDENTIFIED]).ToString());
+                    }
+                    else
+                    {
+                        SetArmorDisplayActive(__instance, false);
+
+                        __instance.WeaponList.SetActive(false);
+                        Transform weaponListT = __instance.WeaponList?.transform?.parent?.Find("tgtWeaponsLabel");
+                        GameObject weaponsLabel = weaponListT.gameObject;
+                        weaponsLabel.SetActive(false);
+                    }
+                }
+                else if (__instance.ActivelyShownCombatant is BattleTech.Building building)
+                {
+                    Mod.Log.Debug?.Write($"CHTC:RAI ~~~ target:{CombatantUtils.Label(__instance.ActivelyShownCombatant)} is enemy building");
+
                     SetArmorDisplayActive(__instance, true);
-                } else if (scanType == SensorScanType.SurfaceAnalysis ||
-                    ModState.LastPlayerActorActivated.VisibilityToTargetUnit(target) == VisibilityLevel.LOSFull && hasVisualScan) {
-
-                    SetArmorDisplayActive(__instance, true);
-
-                    // Update the weapons to show only 
-                    for (int i = 0; i < ___weaponNames.Count; i++) {
-
-                        // Update ranged weapons
-                        if (i < target.Weapons.Count) {
-                            Weapon targetWeapon = target.Weapons[i];
-
-                            string wName;
-                            switch(targetWeapon.Type) {
-                                case WeaponType.Autocannon:
-                                case WeaponType.Gauss:
-                                case WeaponType.MachineGun:
-                                case WeaponType.AMS:
-                                    wName = new Text(Mod.Config.LocalizedText[ModConfig.LT_TARG_COMP_BALLISTIC]).ToString();
-                                    break;
-                                case WeaponType.Laser:
-                                case WeaponType.PPC:
-                                case WeaponType.Flamer:
-                                    wName = new Text(Mod.Config.LocalizedText[ModConfig.LT_TARG_COMP_ENERGY]).ToString();
-                                    break;
-                                case WeaponType.LRM:
-                                case WeaponType.SRM:
-                                    wName = new Text(Mod.Config.LocalizedText[ModConfig.LT_TARG_COMP_MISSILE]).ToString();
-                                    break;
-                                case WeaponType.Melee:
-                                    wName = new Text(Mod.Config.LocalizedText[ModConfig.LT_TARG_COMP_PHYSICAL]).ToString();
-                                    break;
-                                default:
-                                    wName = new Text(Mod.Config.LocalizedText[ModConfig.LT_TARG_COMP_UNIDENTIFIED]).ToString();
-                                    break;
-                            }
-                            ___weaponNames[i].SetText(wName);
-                        } else if (!___weaponNames[i].text.Equals("XXXXXXXXXXXXXX")) {
-                            ___weaponNames[i].SetText(new Text(Mod.Config.LocalizedText[ModConfig.LT_TARG_COMP_UNIDENTIFIED]).ToString());
-                        }
-                    }                       
-
-                    // Update the summary display
-                    __instance.WeaponList.SetActive(true);
-                    Transform weaponListT = __instance.WeaponList?.transform?.parent?.Find("tgtWeaponsLabel");
-                    GameObject weaponsLabel = weaponListT.gameObject;
-                    TextMeshProUGUI labelText = weaponsLabel.GetComponent<TextMeshProUGUI>();
-                    labelText.SetText(new Text(Mod.Config.LocalizedText[ModConfig.LT_TARG_COMP_UNIDENTIFIED]).ToString());
-                } else {
-
-                    SetArmorDisplayActive(__instance, false);
 
                     __instance.WeaponList.SetActive(false);
                     Transform weaponListT = __instance.WeaponList?.transform?.parent?.Find("tgtWeaponsLabel");
                     GameObject weaponsLabel = weaponListT.gameObject;
                     weaponsLabel.SetActive(false);
                 }
-            } else if ((__instance.ActivelyShownCombatant as Building) != null) {
-                Mod.Log.Debug($"CHTC:RAI ~~~ target:{CombatantUtils.Label(__instance.ActivelyShownCombatant)} is enemy building");
+                else
+                {
+                    // WTF
+                }
+            } 
+            catch (Exception e)
+            {
+                Mod.Log.Error?.Write(e, "Failed to RefreshActorInfo!");
+            }
 
-                SetArmorDisplayActive(__instance, true);
+        }
 
-                __instance.WeaponList.SetActive(false);
-                Transform weaponListT = __instance.WeaponList?.transform?.parent?.Find("tgtWeaponsLabel");
-                GameObject weaponsLabel = weaponListT.gameObject;
-                weaponsLabel.SetActive(false);
-            } else {
-                // WTF
+        // Replaces weapon names with a static label that hints at the type, but not the specifics
+        private static void ObfuscateWeaponLabels(List<TextMeshProUGUI> ___weaponNames, AbstractActor target)
+        {
+            for (int i = 0; i < ___weaponNames.Count; i++)
+            {
+
+                // Update ranged weapons
+                if (i < target.Weapons.Count)
+                {
+                    Weapon targetWeapon = target.Weapons[i];
+
+                    string wName;
+                    switch (targetWeapon.Type)
+                    {
+                        case WeaponType.Autocannon:
+                        case WeaponType.Gauss:
+                        case WeaponType.MachineGun:
+                        case WeaponType.AMS:
+                            wName = new Text(Mod.LocalizedText.TargetingComputer[ModText.LT_TARG_COMP_BALLISTIC]).ToString();
+                            break;
+                        case WeaponType.Laser:
+                        case WeaponType.PPC:
+                        case WeaponType.Flamer:
+                            wName = new Text(Mod.LocalizedText.TargetingComputer[ModText.LT_TARG_COMP_ENERGY]).ToString();
+                            break;
+                        case WeaponType.LRM:
+                        case WeaponType.SRM:
+                            wName = new Text(Mod.LocalizedText.TargetingComputer[ModText.LT_TARG_COMP_MISSILE]).ToString();
+                            break;
+                        case WeaponType.Melee:
+                            wName = new Text(Mod.LocalizedText.TargetingComputer[ModText.LT_TARG_COMP_PHYSICAL]).ToString();
+                            break;
+                        default:
+                            wName = new Text(Mod.LocalizedText.TargetingComputer[ModText.LT_TARG_COMP_UNIDENTIFIED]).ToString();
+                            break;
+                    }
+                    ___weaponNames[i].SetText(wName);
+                }
+                else if (!___weaponNames[i].text.Equals("XXXXXXXXXXXXXX"))
+                {
+                    ___weaponNames[i].SetText(new Text(Mod.LocalizedText.TargetingComputer[ModText.LT_TARG_COMP_UNIDENTIFIED]).ToString());
+                }
             }
         }
     }

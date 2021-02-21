@@ -16,16 +16,11 @@ using us.frostraptor.modUtils;
 
 namespace LowVisibility.Patch {
 
-    [HarmonyPatch()]
+    [HarmonyPatch(typeof(CombatHUDStatusPanel), "RefreshDisplayedCombatant")]
     public static class CombatHUDStatusPanel_RefreshDisplayedCombatant {
 
-        // Private method can't be patched by annotations, so use MethodInfo
-        public static MethodInfo TargetMethod() {
-            return AccessTools.Method(typeof(CombatHUDStatusPanel), "RefreshDisplayedCombatant", new Type[] { });
-        }
-
         public static void Postfix(CombatHUDStatusPanel __instance, List<CombatHUDStatusIndicator> ___Buffs, List<CombatHUDStatusIndicator> ___Debuffs) {
-            Mod.Log.Trace("CHUDSP:RDC - entered.");
+            Mod.Log.Trace?.Write("CHUDSP:RDC - entered.");
             if (__instance != null && __instance.DisplayedCombatant != null) {
                 AbstractActor target = __instance.DisplayedCombatant as AbstractActor;
                 // We can receive a building here, so 
@@ -34,16 +29,11 @@ namespace LowVisibility.Patch {
 
                         SensorScanType scanType = SensorLockHelper.CalculateSharedLock(target, ModState.LastPlayerActorActivated);
 
-                        if (scanType < SensorScanType.Vector) {
+                        // Hide the buffs and debuffs if the current scanType is less than allInfo
+                        if (scanType < SensorScanType.AllInformation) {
                             //// Hide the buffs and debuffs
                             ___Buffs.ForEach(si => si.gameObject.SetActive(false));
                             ___Debuffs.ForEach(si => si.gameObject.SetActive(false));
-                        } else if (scanType < SensorScanType.StructureAnalysis) {
-                            // Hide the buffs and debuffs
-                            ___Buffs.ForEach(si => si.gameObject.SetActive(false));
-                            ___Debuffs.ForEach(si => si.gameObject.SetActive(false));
-                        } else if (scanType >= SensorScanType.StructureAnalysis) {
-                            // Do nothing; normal state
                         }
                     }
 
@@ -57,10 +47,126 @@ namespace LowVisibility.Patch {
     }
 
 
-    [HarmonyPatch(typeof(CombatHUDStatusPanel), "HideStealthIndicator")]
-    public static class CombatHUDStatusPanel_HideStealthIndicator {
-        public static void Postfix(CombatHUDStatusPanel __instance) {
-            Mod.Log.Trace("CHUDSP:HSI - entered.");
+    // This patch only exists to try to isolate the bug being reported in RT where the HUD 'vanishes'. See
+    //   https://github.com/BattletechModders/LowVisibility/issues/39 for details. I have no code that interferes in this logic
+    //   before the postfix above on RefreshDisplayedCombatant, so we're replicating ShowEffectStatuses faithfully here
+    [HarmonyPatch(typeof(CombatHUDStatusPanel), "ShowEffectStatuses")]
+    static class CombatHUDStatusPanel_ShowEffectStatuses
+    {
+        static bool Prefix(CombatHUDStatusPanel __instance, AbstractActor actor, AbilityDef.SpecialRules specialRulesFilter, Vector3 worldPos, Dictionary<string, CombatHUDStatusIndicator> ___effectDict)
+        {
+            Mod.Log.Debug?.Write($"Updating StatusEffect Panel for actor: {CombatantUtils.Label(actor)}");
+
+            try
+            {
+                List<EffectData> effectsOnActor = new List<EffectData>();
+
+                foreach (Effect effect in ModState.Combat.EffectManager.GetAllEffectsTargeting(actor))
+                {
+
+                    if (effect == null || effect.EffectData == null) 
+                    {
+                        Mod.Log.Warn?.Write($"Effect with id: {effect?.id} has no effectData! Effect is from creatorGUID: {effect?.creatorGUID} creatorID: {effect?.creatorID} " +
+                            $"with targetId: {effect?.targetID}");
+                        continue;
+                    }
+
+                    if (effect.EffectData.targetingData.specialRules != AbilityDef.SpecialRules.Aura && 
+                        (effect.EffectData.targetingData.effectTriggerType != EffectTriggerType.OnDamaged || effect.triggerCount != 0)
+                        )
+                    {
+                        Mod.Log.Debug?.Write($"Adding effectId: {effect?.EffectData?.Description?.Id} with name: {effect?.EffectData?.Description?.Name}");
+                        effectsOnActor.Add(effect.EffectData);
+                    }
+                }
+
+                if (specialRulesFilter == AbilityDef.SpecialRules.Aura)
+                {
+                    if (actor.AuraCache == null)
+                    {
+                        Mod.Log.Warn?.Write($"Actor: {CombatantUtils.Label(actor)} has a null aura cache.  This should not happen!");
+                    }
+                    else
+                    {
+                        Dictionary<string, List<EffectData>> dictionary = actor.AuraCache.PreviewAurasAffectingMe(actor, worldPos, null);
+                        foreach (string key in dictionary.Keys)
+                        {
+                            List<EffectData> collection = dictionary[key];
+                            Mod.Log.Debug?.Write("Adding collection from aura.");
+                            effectsOnActor.AddRange(collection);
+                        }
+                    }
+                }
+
+
+                Traverse shouldShowEffectT = Traverse.Create(__instance).Method("ShouldShowEffect", new Type[] { typeof(EffectData), typeof(AbilityDef.SpecialRules)});
+                Traverse showDebuffT = Traverse.Create(__instance).Method("ShowBuff", new Type[] { typeof(string), typeof(Text), typeof(Text), typeof(Vector3), typeof(bool) });
+                Traverse showBuffT = Traverse.Create(__instance).Method("ShowDebuff", new Type[] { typeof(string), typeof(Text), typeof(Text), typeof(Vector3), typeof(bool) });
+                if (shouldShowEffectT == null || showDebuffT == null || showBuffT == null)
+                {
+                    Mod.Log.Error?.Write("Failed to traverse necessary methods! Notify FrostRaptor - this should not happen!");
+                    return false;
+                }
+
+                ___effectDict.Clear();
+                for (int i = 0; i < effectsOnActor.Count; i++)
+                {
+                    EffectData effectData = effectsOnActor[i];
+
+                    if (effectData == null || effectData.Description == null || 
+                        effectData.Description.Id == null || effectData.Description.Name == null)
+                    {
+                        Mod.Log.Error?.Write($"EffectData {effectData?.Description?.Name} has no description, id, or name! Cannot process, skipping!");
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(effectData?.Description?.Icon)) continue; // No icon to display, skip.
+
+                    bool shouldShowEffect = shouldShowEffectT.GetValue<bool>(new object[] { effectData, specialRulesFilter });
+                    bool alreadyShown = ___effectDict.ContainsKey(effectData.Description.Id);
+                    Mod.Log.Debug?.Write($" -- Effect with name: {effectData?.Description?.Name} and Id: {effectData?.Description?.Id} has shouldShowEffect: {shouldShowEffect} and alreadyShown: {alreadyShown}");
+
+                    string effectId = effectData.Description.Id;
+                    if (shouldShowEffect && !alreadyShown)
+                    {
+                        Mod.Log.Debug?.Write($" -- Adding effect with name: {effectData?.Description?.Name} and Id: {effectData?.Description?.Id} to buff list.");
+                        int num = effectsOnActor.FindAll((EffectData x) => x.Description.Id == effectId).Count;
+                        if (effectData.statisticData != null && 
+                            effectData.statisticData.targetCollection == StatisticEffectData.TargetCollection.Weapon && 
+                            effectData.statisticData.targetWeaponSubType != WeaponSubType.Melee)
+                        {
+                            num = ((num > 1) ? (num / actor.Weapons.Count) : num);
+                        }
+                        Text text = CombatHUDStatusPanel.ProcessDetailString(effectData, (num > 0) ? num : 1);
+
+                        CombatHUDStatusIndicator combatHUDStatusIndicator;
+                        if (effectsOnActor[i].nature == EffectNature.Debuff)
+                        {
+                            combatHUDStatusIndicator = showDebuffT.GetValue<CombatHUDStatusIndicator>(new object[] {
+                                effectData.Description.Icon, new Text(effectData.Description.Name, Array.Empty<object>()), text, __instance.effectIconScale, false
+                            });
+                        }
+                        else
+                        {
+                            combatHUDStatusIndicator = showBuffT.GetValue<CombatHUDStatusIndicator>(new object[] {
+                                effectData.Description.Icon, new Text(effectData.Description.Name, Array.Empty<object>()), text, __instance.effectIconScale, false
+                            });
+                        }
+
+                        if (combatHUDStatusIndicator != null)
+                        {
+                            combatHUDStatusIndicator.AddTooltipString(text, effectsOnActor[i].nature);
+                            ___effectDict[effectId] = combatHUDStatusIndicator;
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Mod.Log.Error?.Write(e, $"Failed to log status effects for actor: {CombatantUtils.Label(actor)} at position: {worldPos}");
+            }
+
+            return false;
         }
     }
 
@@ -69,7 +175,7 @@ namespace LowVisibility.Patch {
     public static class CombatHUDStatusPanel_ShowStealthIndicators_Vector3 {
         public static void Postfix(CombatHUDStatusPanel __instance, AbstractActor target, Vector3 previewPos, CombatHUDStealthBarPips ___stealthDisplay) {
             if (___stealthDisplay == null) { return; }
-            Mod.Log.Trace("CHUDSP:SSI:Vector3 - entered.");
+            Mod.Log.Trace?.Write("CHUDSP:SSI:Vector3 - entered.");
 
             VfxHelper.CalculateMimeticPips(___stealthDisplay, target, previewPos);
         }
@@ -80,23 +186,17 @@ namespace LowVisibility.Patch {
     public static class CombatHUDStatusPanel_ShowStealthIndicators_float {
         public static void Postfix(CombatHUDStatusPanel __instance, AbstractActor target, float previewStealth, CombatHUDStealthBarPips ___stealthDisplay) {
             if (___stealthDisplay == null) { return; }
-            Mod.Log.Trace("CHUDSP:SSI:float - entered.");
+            Mod.Log.Trace?.Write("CHUDSP:SSI:float - entered.");
 
             VfxHelper.CalculateMimeticPips(___stealthDisplay, target);
         }
     }
 
-
-    [HarmonyPatch()]
+    [HarmonyPatch(typeof(CombatHUDStatusPanel), "ShowActorStatuses")]
     public static class CombatHUDStatusPanel_ShowActorStatuses {
 
-        // Private method can't be patched by annotations, so use MethodInfo
-        public static MethodInfo TargetMethod() {
-            return AccessTools.Method(typeof(CombatHUDStatusPanel), "ShowActorStatuses", new Type[] { typeof(AbstractActor) });
-        }
-
         public static void Postfix(CombatHUDStatusPanel __instance) {
-            Mod.Log.Trace("CHUDSP:SAS - entered.");
+            Mod.Log.Trace?.Write("CHUDSP:SAS - entered.");
 
             if (__instance.DisplayedCombatant != null) {
                 Type[] iconMethodParams = new Type[] { typeof(SVGAsset), typeof(Text), typeof(Text), typeof(Vector3), typeof(bool) };
@@ -112,14 +212,14 @@ namespace LowVisibility.Patch {
                 if (isPlayer) {
 
                     SVGAsset icon = dm.GetObjectOfType<SVGAsset>(Mod.Config.Icons.VisionAndSensors, BattleTechResourceType.SVGAsset);
-                    Text title = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TITLE_VISION_AND_SENSORS]);
+                    Text title = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TITLE_VISION_AND_SENSORS]);
                     showBuffIconMethod.GetValue(new object[] { icon, title, new Text(BuildToolTip(actor)), __instance.effectIconScale, false });
 
                     // Disable the sensors
                     if (actor.Combat.TurnDirector.CurrentRound == 1) {
                         SVGAsset sensorsDisabledIcon = dm.GetObjectOfType<SVGAsset>(Mod.Config.Icons.SensorsDisabled, BattleTechResourceType.SVGAsset);
-                        Text sensorsDisabledTitle = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TITLE_SENSORS_DISABLED]);
-                        Text sensorsDisabledText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_SENSORS_DISABLED]);
+                        Text sensorsDisabledTitle = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TITLE_SENSORS_DISABLED]);
+                        Text sensorsDisabledText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_SENSORS_DISABLED]);
                         showDebuffIconMethod.GetValue(new object[] { 
                             sensorsDisabledIcon, sensorsDisabledTitle, sensorsDisabledText, __instance.effectIconScale, false });
                     }
@@ -133,7 +233,7 @@ namespace LowVisibility.Patch {
                     if (actorState.GetRawECMShield() != 0) {
                         // A positive is good, a negative is bad
                         string color = actorState.GetRawECMShield() >= 0 ? "00FF00" : "FF0000";
-                        string localText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_EW_ECM_SHIELD], 
+                        string localText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_EW_ECM_SHIELD], 
                             new object[] { color, actorState.GetRawECMShield() }
                             ).ToString();
                         sb.Append(localText);
@@ -142,7 +242,7 @@ namespace LowVisibility.Patch {
                     if (actorState.GetRawECMJammed() != 0) {
                         // A positive (after normalization) is good, a negative is bad
                         string color = -1 * actorState.GetRawECMJammed() >= 0 ? "00FF00" : "FF0000";
-                        string localText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_EW_ECM_JAMMING],
+                        string localText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_EW_ECM_JAMMING],
                             new object[] { color, -1 * actorState.GetRawECMJammed() }
                             ).ToString();
                         sb.Append(localText);
@@ -151,7 +251,7 @@ namespace LowVisibility.Patch {
                     if (actorState.ProbeCarrierMod() != 0) {
                         // A positive is good, a negative is bad
                         string color = actorState.ProbeCarrierMod() >= 0 ? "00FF00" : "FF0000";
-                        string localText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_EW_PROBE_CARRIER],
+                        string localText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_EW_PROBE_CARRIER],
                             new object[] { color, -1 * actorState.ProbeCarrierMod() }
                             ).ToString();
                         sb.Append(localText);
@@ -160,7 +260,7 @@ namespace LowVisibility.Patch {
                     // Armor
                     if (actorState.GetRawStealth() != null) {
                         string color = "00FF00";
-                        string localText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_EW_STEALTH],
+                        string localText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_EW_STEALTH],
                             new object[] { color, actorState.GetRawStealth().MediumRangeAttackMod, actorState.GetRawStealth().LongRangeAttackMod, actorState.GetRawStealth().ExtremeRangeAttackMod, }
                             ).ToString();
                         sb.Append(localText);
@@ -169,7 +269,7 @@ namespace LowVisibility.Patch {
                     if (actorState.GetRawMimetic() != null) {
                         // A positive is good (harder to hit), should be no negative?
                         string color = "00FF00";
-                        string localText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_EW_MIMETIC],
+                        string localText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_EW_MIMETIC],
                             new object[] { color, actorState.CurrentMimeticPips() }
                             ).ToString();
                         sb.Append(localText);
@@ -179,7 +279,7 @@ namespace LowVisibility.Patch {
                     if (actorState.PingedByProbeMod() != 0) {
                         // A positive (after normalization) is good, a negative is bad
                         string color = -1 * actorState.PingedByProbeMod() >= 0 ? "00FF00" : "FF0000";
-                        string localText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_EW_PROBE_EFFECT],
+                        string localText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_EW_PROBE_EFFECT],
                             new object[] { color, -1 * actorState.PingedByProbeMod() }
                             ).ToString();
                         sb.Append(localText);
@@ -188,7 +288,7 @@ namespace LowVisibility.Patch {
                     if (actorState.GetRawNarcEffect() != null) {
                         // A positive (after normalization) is good, a negative is bad
                         string color = -1 * actorState.GetRawNarcEffect().AttackMod >= 0 ? "00FF00" : "FF0000";
-                        string localText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_EW_NARC_EFFECT],
+                        string localText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_EW_NARC_EFFECT],
                             new object[] { color, -1 * actorState.GetRawNarcEffect().AttackMod }
                             ).ToString();
                         sb.Append(localText);
@@ -197,14 +297,14 @@ namespace LowVisibility.Patch {
                     if (actorState.GetRawTagEffect() != null) {
                         // A positive (after normalization) is good, a negative is bad
                         string color = -1 * actorState.GetRawTagEffect().AttackMod >= 0 ? "00FF00" : "FF0000";
-                        string localText = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TEXT_EW_TAG_EFFECT],
+                        string localText = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TEXT_EW_TAG_EFFECT],
                             new object[] { color, -1 * actorState.GetRawTagEffect().AttackMod }
                             ).ToString();
                         sb.Append(localText);
                     }
 
                     SVGAsset icon = dm.GetObjectOfType<SVGAsset>(Mod.Config.Icons.ElectronicWarfare, BattleTechResourceType.SVGAsset);
-                    Text title = new Text(Mod.Config.LocalizedText[ModConfig.LT_TT_TITLE_EW]);
+                    Text title = new Text(Mod.LocalizedText.Tooltips[ModText.LT_TT_TITLE_EW]);
                     showBuffIconMethod.GetValue(new object[] { icon, title, new Text(sb.ToString()), __instance.effectIconScale, false });
                 }
 
@@ -212,7 +312,7 @@ namespace LowVisibility.Patch {
         }
 
         private static string BuildToolTip(AbstractActor actor) {
-            //Mod.Log.Debug($"EW State for actor:{CombatantUtils.Label(actor)} = {ewState}");
+            //Mod.Log.Debug?.Write($"EW State for actor:{CombatantUtils.Label(actor)} = {ewState}");
 
             List<string> details = new List<string>();
 
@@ -220,23 +320,25 @@ namespace LowVisibility.Patch {
             float visualLockRange = VisualLockHelper.GetVisualLockRange(actor);
             float visualScanRange = VisualLockHelper.GetVisualScanRange(actor);
             details.Add(
-                new Text(Mod.Config.LocalizedText[ModConfig.LT_PANEL_VISUALS], 
+                new Text(Mod.LocalizedText.StatusPanel[ModText.LT_PANEL_VISUALS], 
                     new object[] { visualLockRange, visualScanRange, ModState.GetMapConfig().UILabel() })
                     .ToString()
                 );
 
             // Sensors check
             EWState ewState = new EWState(actor);
-            SensorScanType checkLevel;
+
             int totalDetails = ewState.GetCurrentEWCheck() + ewState.AdvancedSensorsMod();
-            if (totalDetails > (int)SensorScanType.DentalRecords) { checkLevel = SensorScanType.DentalRecords; } 
-            else if (totalDetails < (int)SensorScanType.NoInfo) { checkLevel = SensorScanType.NoInfo; } 
-            else { checkLevel = (SensorScanType)totalDetails; }
+            SensorScanType checkLevel = SensorScanTypeHelper.DetectionLevelForCheck(totalDetails);
+            
+            float rawRangeMulti = SensorLockHelper.GetAllSensorRangeMultipliers(actor);
+            float rangeMulti = rawRangeMulti + ewState.GetSensorsRangeMulti();
+            
             float sensorsRange = SensorLockHelper.GetSensorsRange(actor);
             string sensorColor = ewState.GetCurrentEWCheck() >= 0 ? "00FF00" : "FF0000";
             details.Add(
-                new Text(Mod.Config.LocalizedText[ModConfig.LT_PANEL_SENSORS], 
-                    new object[] { sensorColor, sensorsRange, sensorColor, ewState.GetSensorsRangeMulti(), checkLevel.Label() })
+                new Text(Mod.LocalizedText.StatusPanel[ModText.LT_PANEL_SENSORS], 
+                    new object[] { sensorColor, sensorsRange, sensorColor, rangeMulti, checkLevel.Label() })
                     .ToString()
                 );
 
@@ -246,7 +348,7 @@ namespace LowVisibility.Patch {
             string checkColor = ewState.GetRawCheck() >= 0 ? "00FF00" : "FF0000";
             string advSenColor = ewState.AdvancedSensorsMod() >= 0 ? "00FF00" : "FF0000";
             details.Add(
-                new Text(Mod.Config.LocalizedText[ModConfig.LT_PANEL_DETAILS],
+                new Text(Mod.LocalizedText.StatusPanel[ModText.LT_PANEL_DETAILS],
                     new object[] { totalColor, totalDetails, checkColor, ewState.GetRawCheck(), ewState.GetRawTactics(), advSenColor, ewState.AdvancedSensorsMod() })
                     .ToString()
                 );
@@ -258,7 +360,7 @@ namespace LowVisibility.Patch {
                 // Positive is bad, negative is good
                 string modColor = heatVis.AttackMod >= 0 ? "FF0000" : "00FF00";
                 details.Add(
-                    new Text(Mod.Config.LocalizedText[ModConfig.LT_PANEL_HEAT],
+                    new Text(Mod.LocalizedText.StatusPanel[ModText.LT_PANEL_HEAT],
                         new object[] { modColor, heatVis.AttackMod, heatVis.HeatDivisor, heatVis.MaximumRange })
                         .ToString()
                     );
@@ -272,7 +374,7 @@ namespace LowVisibility.Patch {
                 string modColor = zoomVis.AttackMod >= 0 ? "FF0000" : "00FF00";
                 string capColor = zoomVis.AttackCap >= 0 ? "FF0000" : "00FF00";
                 details.Add(
-                    new Text(Mod.Config.LocalizedText[ModConfig.LT_PANEL_ZOOM],
+                    new Text(Mod.LocalizedText.StatusPanel[ModText.LT_PANEL_ZOOM],
                         new object[] { modColor, zoomVis.AttackMod, capColor, zoomVis.AttackCap, zoomVis.MaximumRange })
                         .ToString()
                     );
